@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ONE CORE AI</title>
+    <script src="https://cdn.tailwindcss.com"></script> <!-- TailwindCSS CDN -->
+
+    <style>
+        /* 🌈 Instagram-style Animated Background */
+        body {
+            background: linear-gradient(45deg, #f09433, #e6683c, #dc2743, #cc2366, #bc1888);
+            background-size: 300% 300%;
+            animation: rotateGradient 8s infinite linear;
+        }
+
+        @keyframes rotateGradient {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+    </style>
+
+    <script>
+        let selectedModel = "";
+        let recognition;
+        let isListening = false;
+        let generatedResponse = ""; // Store the generated response for later speaking
+
+        async function loadModels() {
+            const modelSelect = document.getElementById("modelSelect");
+            try {
+                const response = await fetch("http://127.0.0.1:5000/api/tags");
+                const data = await response.json();
+                modelSelect.innerHTML = "";
+                data.models.forEach(modelObj => {
+                    const modelName = modelObj.name || modelObj.model || modelObj;
+                    const option = document.createElement("option");
+                    option.value = modelName;
+                    option.textContent = modelName;
+                    modelSelect.appendChild(option);
+                });
+                selectedModel = data.models[0].name || data.models[0].model || data.models[0];
+            } catch (error) {
+                modelSelect.innerHTML = `<option>Error loading models</option>`;
+            }
+        }
+
+        async function loadChatHistory() {
+            const userId = localStorage.getItem("user") || "anonymous";
+            try {
+                const response = await fetch(`http://127.0.0.1:5000/api/chat-history?user_id=${userId}`);
+                const history = await response.json();
+
+                if (!Array.isArray(history)) {
+                    console.error("Chat history is not an array:", history);
+                    return;
+                }
+
+                const chatContainer = document.getElementById("chatContainer");
+                chatContainer.innerHTML = "";
+
+                history.forEach(entry => {
+                    addMessage("user", entry.prompt);
+                    addMessage("bot", entry.response, entry.model);
+                });
+            } catch (error) {
+                console.error("Failed to load chat history:", error);
+            }
+        }
+
+        async function generateText() {
+            const prompt = document.getElementById("prompt").value;
+            const userId = localStorage.getItem("user") || "anonymous";
+            const chatContainer = document.getElementById("chatContainer");
+
+            if (!prompt) return;
+
+            addMessage("user", prompt);
+            addMessage("bot", "Generating response...");
+
+            try {
+                const response = await fetch("http://127.0.0.1:5000/api/generate", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ prompt, model: selectedModel, user_id: userId })
+                });
+
+                const data = await response.json();
+                chatContainer.removeChild(chatContainer.lastChild);
+
+                let responseText = data.error 
+                    ? `Error: ${data.error}` 
+                    : data.output;
+
+                generatedResponse = responseText; // Store the response
+
+                addMessage("bot", responseText, selectedModel);
+            } catch (error) {
+                chatContainer.removeChild(chatContainer.lastChild);
+                addMessage("bot", "Failed to connect to the API.");
+            }
+        }
+
+        function speakOutput() {
+            if (generatedResponse) {
+                speakText(generatedResponse);
+            } else {
+                alert("No response available to speak.");
+            }
+        }
+
+        function speakText(text) {
+            const speech = new SpeechSynthesisUtterance(text);
+            speech.lang = "en-US";
+            window.speechSynthesis.speak(speech);
+        }
+
+        function addMessage(sender, message, modelName = "") {
+            const chatContainer = document.getElementById("chatContainer");
+            const messageDiv = document.createElement("div");
+            messageDiv.classList.add("p-3", "rounded-lg", "mb-2", "max-w-80", "break-words");
+
+            if (sender === "user") {
+                messageDiv.classList.add("bg-blue-200", "text-right", "self-end");
+            } else {
+                messageDiv.classList.add("bg-gray-100", "border-l-4", "border-blue-500");
+            }
+
+            messageDiv.innerHTML = sender === "bot" && modelName 
+                ? `<strong>LLM (Model: ${modelName}):</strong> ${message}` 
+                : `<strong>${sender === "user" ? "You" : "LLM"}:</strong> ${message}`;
+
+            chatContainer.appendChild(messageDiv);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        function startVoiceRecognition() {
+            if (!("webkitSpeechRecognition" in window)) {
+                alert("Speech recognition is not supported in this browser.");
+                return;
+            }
+
+            if (!recognition) {
+                recognition = new webkitSpeechRecognition();
+                recognition.continuous = false;
+                recognition.interimResults = false;
+                recognition.lang = "en-US";
+
+                recognition.onstart = () => {
+                    document.getElementById("micButton").textContent = "🎙️ Listening...";
+                    isListening = true;
+                };
+
+                recognition.onresult = (event) => {
+                    const transcript = event.results[0][0].transcript;
+                    document.getElementById("prompt").value = transcript;
+                };
+
+                recognition.onerror = () => {
+                    alert("Error with speech recognition. Try again.");
+                };
+
+                recognition.onend = () => {
+                    document.getElementById("micButton").textContent = "🎤 Start Voice Input";
+                    isListening = false;
+                };
+            }
+
+            if (!isListening) {
+                recognition.start();
+            }
+        }
+
+        function clearChat() {
+            document.getElementById("chatContainer").innerHTML = "";
+        }
+
+        async function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const formData = new FormData();
+            formData.append("file", file);
+
+            // Display the uploaded image in the chat
+            const chatContainer = document.getElementById("chatContainer");
+            addMessage("user", `Uploaded image: ${file.name}`);
+            const imageUrl = URL.createObjectURL(file);
+            const imageMessageDiv = document.createElement("div");
+            imageMessageDiv.classList.add("p-3", "bg-blue-200", "text-right", "self-end", "rounded-lg", "mb-2");
+            imageMessageDiv.innerHTML = `<img src="${imageUrl}" alt="Uploaded Image" class="max-w-xs h-auto rounded">`;
+            chatContainer.appendChild(imageMessageDiv);
+
+            try {
+                const response = await fetch("http://127.0.0.1:5000/api/upload-image", {
+                    method: "POST",
+                    body: formData
+                });
+
+                const data = await response.json();
+                if (data.error) {
+                    alert("Error uploading image: " + data.error);
+                } else {
+                    addMessage("bot", "Describing the image...");
+                    addMessage("bot", data.description); // Assuming the response includes a description
+                }
+            } catch (error) {
+                alert("Failed to upload image.");
+            }
+        }
+
+        window.onload = function() {
+            loadModels();
+            loadChatHistory();
+        };
+    </script>
+</head>
+<body class="h-screen flex items-center justify-center">
+    <div class="bg-white p-6 rounded-lg shadow-lg max-w-md w-full">
+        <h1 class="text-2xl font-bold text-center mb-4">ONE CORE AI</h1>
+
+        <label for="modelSelect" class="block text-sm font-medium text-gray-700">Select Model:</label>
+        <select id="modelSelect" class="w-full p-2 border rounded mb-3">
+            <option>Loading models...</option>
+        </select>
+
+        <label for="prompt" class="block text-sm font-medium text-gray-700">Enter Prompt:</label>
+        <input type="text" id="prompt" class="w-full p-2 border rounded mb-3" placeholder="Type your message...">
+
+        <button id="micButton" onclick="startVoiceRecognition()" class="w-full bg-green-500 text-white p-2 rounded mb-2 hover:bg-green-600">
+            🎤 Start Voice Input
+        </button>
+        <button onclick="generateText()" class="w-full bg-blue-500 text-white p-2 rounded mb-2 hover:bg-blue-600">
+            Generate
+        </button>
+        <button class="w-full bg-yellow-500 text-white p-2 rounded mb-2 hover:bg-yellow-600" onclick="speakOutput()">
+            🔊 Speak Output
+        </button>
+        <button class="w-full bg-red-500 text-white p-2 rounded mb-2 hover:bg-red-600" onclick="clearChat()">
+            🗑️ Clear Chat
+        </button>
+
+        <!-- Image Upload Section -->
+        <label for="fileInput" class="block text-sm font-medium text-gray-700 mt-4">Upload Image:</label>
+        <input type="file" id="fileInput" class="w-full p-2 border rounded mb-3" accept="image/*" onchange="handleFileUpload(event)">
+
+        <h2 class="text-lg font-bold mt-4">Chat:</h2>
+        <div id="chatContainer" class="chat-container flex flex-col gap-2 p-2 h-60 overflow-y-auto bg-gray-100 rounded"></div>
+    </div>
+</body>
+</html>
